@@ -1,60 +1,73 @@
-from typing import Literal
+from typing import Literal, Any
 from dataclasses import dataclass
 from pathlib import Path
 import json
 
-import imageio
+import imageio.v2 as imageio
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+import torchvision.transforms.functional as F
 
-DATASPLIT = Literal['train', 'val', 'test']
+DATASPLIT = Literal["train", "val", "test"]
+
 
 @dataclass
 class ViewData:
     imgs: torch.Tensor
     poses: torch.Tensor
 
+
+def read_camera_params(
+    data_path: str, split: DATASPLIT = "train", half_res: bool = False
+) -> tuple[int, int, float]:
+    """Read camera parameters from the metadata file.
+    Returns (height, width, focal_length) tuple."""
+    metadata_path = Path(data_path) / f"transforms_{split}.json"
+    metadata = metadata_path.read_text()
+    metadata = json.loads(metadata)
+    sample_img = Path(data_path) / f"{metadata['frames'][0]['file_path']}.png"
+    height, width = imageio.imread(sample_img).shape[0:2]
+    focal_length = 0.5 * width / np.tan(0.5 * metadata["camera_angle_x"])
+    if half_res is True:
+        height, width, focal_length = height // 2, width // 2, focal_length / 2.0
+    return height, width, focal_length
+
+
 class LegoDataset(Dataset):
     """This is a nerf dataset for synthetic lego model from blender."""
-    
-    width: int
-    height: int
-    focal_length: float
-    
-    def __init__(self, data_path: str, split: DATASPLIT="train", half_res: bool=False) -> None:
+
+    def __init__(
+        self, data_path: str, split: DATASPLIT = "train", half_res: bool = False
+    ) -> None:
         super().__init__()
         self.data_path = Path(data_path)
         self.split = split
-        self.half_res=half_res
-        # Metadata includes camera parameters, image path and its camera pose.
+        self.half_res = half_res
+        self.frames: list[Any]
         metadata_path = self.data_path / f"transforms_{split}.json"
-        metadata = metadata_path.read_text()
-        self.metadata = json.loads(metadata)
-        
-        sample_img = self.get_img_path(0)
-        self.width, self.height = imageio.imread(sample_img).shape[0:2]
-        self.focal_length = .5 * self.width / np.tan(.5 * self.metadata['camera_angle_x'])
-        
-    def get_img_path(self, index) -> Path:
-        return self.data_path / f"{self.metadata['frames'][index]['file_path']}.png"
-    
-    def get_camera_params(self) -> tuple[int, int, float]:
-        """return width & height of img, focal_length"""
-        return self.width, self.height, self.focal_length
-    
+        with metadata_path.open() as f:
+            metadata = json.load(f)
+            self.frames = metadata["frames"]
+
     def __len__(self) -> int:
-        return len(self.metadata["frames"])
-    
+        return len(self.frames)
+
     def __getitem__(self, index) -> ViewData:
-        img_path = self.get_img_path(index)
-        img = torch.tensor(imageio.imread(img_path) / 255.).type(torch.float32)
-        pose = torch.tensor(self.metadata['frames'][index]['transform_matrix']).type(torch.float32)
+        img_path = self.data_path / f"{self.frames[index]['file_path']}.png"
+        img = torch.tensor(imageio.imread(img_path) / 255.0).type(torch.float32)
+        pose = torch.tensor(self.frames[index]["transform_matrix"]).type(
+            torch.float32
+        )
+        
+        if self.half_res:
+            H,W = img.shape[0:2]
+            permuted = img.permute(2,0,1) # resize in torchvision expects [...,H,W] shape
+            img = F.resize(permuted, [H//2, W//2], antialias=True).permute(1,2,0)
+
         return ViewData(img, pose)
 
-    
+
 if __name__ == "__main__":
-    datapath = "/home/minjunsz/codes/nerf/data/nerf_synthetic/lego"
-    dataset = LegoDataset(data_path=datapath, split="train")
-    dataset[1]
-    
+    datapath = "/home/minjun/codes/nerf/data/nerf_synthetic/lego"
+    dataset = LegoDataset(data_path=datapath, split="train", half_res=True)
