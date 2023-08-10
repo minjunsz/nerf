@@ -1,4 +1,6 @@
 """This module implements the volumetric rendering."""
+from dataclasses import dataclass
+
 import torch
 import torch.nn.functional as F
 
@@ -11,8 +13,8 @@ def sample_coarse_points(
     Parameters
     ----------
     ray_batch : torch.Tensor
-        Shape : [BATCH_SIZE, 11]. Information for rays.
-        concatenation of rays_o(3) + rays_d(3) + near(1) + far(1) + viewdir(3)
+        Shape : [BATCH_SIZE, 8]. Information for rays.
+        concatenation of rays_o(3) + rays_d(3) + near(1) + far(1)
     N_samples : int
         Number of samples per ray.
     lin_disparity : bool
@@ -48,7 +50,7 @@ def sample_coarse_points(
     z_vals = z_vals.expand([N_rays, N_samples])
 
     # stratified sampling
-    if stratified > 0.0:
+    if stratified:
         # get intervals between samples
         mids = 0.5 * (z_vals[..., 1:] + z_vals[..., :-1])
         upper = torch.cat([mids, z_vals[..., -1:]], -1)
@@ -65,21 +67,43 @@ def sample_coarse_points(
     return points, z_vals
 
 
+# fmt: off
+@dataclass
+class IntegrateResult:
+    rgb_map: torch.Tensor           #  [num_rays, 3]. Estimated RGB color of a ray.
+    disparity_map: torch.Tensor     #  [num_rays]. Disparity map. Inverse of depth map.
+    acc_map: torch.Tensor           #  [num_rays]. Accumulated weights along each ray.
+    depth_map: torch.Tensor         #  [num_rays]. Estimated distance to object.
+    weights: torch.Tensor           #  [num_rays, num_samples]. Weights assigned to each sampled color.
+# fmt: on
+
+
 def integrate_ray(
-    raw: torch.Tensor, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False
-) -> tuple[torch.Tensor, ...]:
+    raw: torch.Tensor,
+    z_vals: torch.Tensor,
+    rays_d: torch.Tensor,
+    raw_noise_std: float = 0.0,
+    white_bkgd: bool = False,
+) -> IntegrateResult:
     """Transform NeRF models raw output to RGB pixel values by integrating rays; volumetric rendering.
 
-    Args:
-        raw: [num_rays, num_samples along ray, 4]. Prediction from model.
-        z_vals: [num_rays, num_samples along ray]. Elapsed time t in the parametrized ray: ray(t)=o+td.
-        rays_d: [num_rays, 3]. Direction of each ray.
-    Returns:
-        rgb_map: [num_rays, 3]. Estimated RGB color of a ray.
-        disparity_map: [num_rays]. Disparity map. Inverse of depth map.
-        acc_map: [num_rays]. Accumulated weights along each ray.
-        weights: [num_rays, num_samples]. Weights assigned to each sampled color.
-        depth_map: [num_rays]. Estimated distance to object.
+    Parameters
+    ----------
+    raw : torch.Tensor
+        [num_rays, num_samples along ray, 4]. Prediction from model.
+    z_vals : torch.Tensor
+        [num_rays, num_samples along ray]. Elapsed time t in the parametrized ray: ray(t)=o+td.
+    rays_d : torch.Tensor
+        [num_rays, 3]. Direction of each ray.
+    raw_noise_std : float, optional
+        standard deviation for alpha channel noise, by default 0.0
+    white_bkgd : bool, optional
+        Whether images have white background or not, by default False
+
+    Returns
+    -------
+    IntegrateResult
+        dataclass with (rgb_map, disparity_map, acc_map, weights, depth_map)
     """
     # This is Delta T in the parametrized ray: ray(t)=o+td.
     # append infinity distance for last element
@@ -126,4 +150,10 @@ def integrate_ray(
     if white_bkgd:
         rgb_map = rgb_map + (1.0 - acc_map[..., None])
 
-    return rgb_map, disparity_map, acc_map, weights, depth_map
+    return IntegrateResult(
+        rgb_map=rgb_map,
+        disparity_map=disparity_map,
+        acc_map=acc_map,
+        depth_map=depth_map,
+        weights=weights,
+    )

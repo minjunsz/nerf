@@ -4,7 +4,7 @@ Pixel centering is NOT considered."""
 import torch
 
 
-def get_ray_directions(
+def get_rays(
     height: int, width: int, K: torch.Tensor, c2w: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Generate directional vectors of the casted rays through each pixels.
@@ -49,3 +49,6 @@ def get_ray_directions(
     # Translate camera frame's origin to the world frame. It is the origin of all rays.
     rays_o = c2w[:3, -1].expand(rays_d.shape)
     return rays_o, rays_d
+
+
+# TODO: implement hierarchical sampling

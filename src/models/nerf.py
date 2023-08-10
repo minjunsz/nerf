@@ -1,4 +1,5 @@
 """Core module implementing NeRF models."""
+from typing import Union
 import torch
 from torch import nn
 
@@ -8,7 +9,12 @@ class Embedder:
     The output encoding includes original input and utilizes sin, cos embedding functions.
     This positional encoding uses evenly distributed frequency bands in log-scale."""
 
-    def __init__(self, input_dim: int, num_freqs: int, max_freq) -> None:
+    def __init__(
+        self,
+        input_dim: int,
+        num_freqs: int,
+        max_freq: Union[int, float],
+    ) -> None:
         """
         Parameters
         ----------
@@ -16,7 +22,7 @@ class Embedder:
             input feature dimension.
         num_freqs : int
             desired number of frequency bands.
-        max_freq : _type_
+        max_freq : Union[int, float]
             log_2(MAX_FREQUENCY). The frequency bands will span from 2^0 to 2^max_freq.
         """
         self.input_dim = input_dim
@@ -24,7 +30,19 @@ class Embedder:
         self.freq_bands = torch.pow(2, torch.linspace(0.0, max_freq, steps=num_freqs))
         self.out_dim = input_dim * (2 * num_freqs + 1)
 
-    def embed(self, inputs: torch.Tensor):
+    def embed(self, inputs: torch.Tensor) -> torch.Tensor:
+        """Return embeddings of given inputs
+
+        Parameters
+        ----------
+        inputs : torch.Tensor
+            Shape: [..., self.input_dim]
+
+        Returns
+        -------
+        torch.Tensor
+            embedding; [..., self.out_dim]
+        """
         assert inputs.size(-1) == self.input_dim, "Input dimension doesn't match."
         input_times_freq_band = inputs.unsqueeze(-1) * self.freq_bands
         sin_embedding = torch.sin(input_times_freq_band)
@@ -46,44 +64,57 @@ class NeRF(nn.Module):
 
     def __init__(
         self,
-        input_channel: int,
-        view_channel: int,
+        xyz_channel: int,
+        viewdir_channel: int,
         hidden_dim: int = 256,
         *args,
         **kwargs
     ) -> None:
+        """
+        Parameters
+        ----------
+        xyz_channel : int
+            Dimension of xyz input embeddings
+        viewdir_channel : int
+            Dimension of viewing direction input embeddings
+        hidden_dim : int, optional
+            Width of hidden layers, by default 256
+        """
         super().__init__(*args, **kwargs)
-        self.input_channel = input_channel
-        self.view_channel = view_channel
+        self.xyz_channel = xyz_channel
+        self.viewdir_channel = viewdir_channel
         self.hidden_dim = hidden_dim
 
         self.MLP_1 = nn.Sequential(
-            nn.Linear(input_channel, hidden_dim),
+            nn.Linear(self.xyz_channel, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
         )
         self.MLP_2 = nn.Sequential(
-            nn.Linear(input_channel + hidden_dim, hidden_dim),
+            nn.Linear(self.xyz_channel + self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
+            nn.Linear(self.hidden_dim, self.hidden_dim),
             nn.ReLU(),
         )
-        self.feature_linear = nn.Linear(hidden_dim, hidden_dim)
-        self.alpha_linear = nn.Linear(hidden_dim, 1)
-        self.view_linear = nn.Linear(view_channel + hidden_dim, hidden_dim // 2)
-        self.rgb_linear = nn.Linear(hidden_dim // 2, 3)
+        self.feature_linear = nn.Linear(self.hidden_dim, self.hidden_dim)
+        self.alpha_linear = nn.Linear(self.hidden_dim, 1)
+        self.view_linear = nn.Linear(
+            self.viewdir_channel + self.hidden_dim,
+            self.hidden_dim // 2,
+        )
+        self.rgb_linear = nn.Linear(self.hidden_dim // 2, 3)
 
     def forward(self, x):
-        inputs, views = torch.split(x, [self.input_channel, self.view_channel], dim=-1)
+        inputs, views = torch.split(x, [self.xyz_channel, self.viewdir_channel], dim=-1)
         h1 = self.MLP_1(inputs)
         h2 = self.MLP_2(torch.cat([inputs, h1], dim=-1))
 
