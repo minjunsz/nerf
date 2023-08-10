@@ -1,5 +1,6 @@
 """This module implements the volumetric rendering."""
 import torch
+import torch.nn.functional as F
 
 
 def sample_coarse_points(
@@ -62,3 +63,67 @@ def sample_coarse_points(
     points = rays_o + rays_d * z_vals[..., :, None]  # [N_rays, N_samples, 3]
 
     return points, z_vals
+
+
+def integrate_ray(
+    raw: torch.Tensor, z_vals, rays_d, raw_noise_std=0, white_bkgd=False, pytest=False
+) -> tuple[torch.Tensor, ...]:
+    """Transform NeRF models raw output to RGB pixel values by integrating rays; volumetric rendering.
+
+    Args:
+        raw: [num_rays, num_samples along ray, 4]. Prediction from model.
+        z_vals: [num_rays, num_samples along ray]. Elapsed time t in the parametrized ray: ray(t)=o+td.
+        rays_d: [num_rays, 3]. Direction of each ray.
+    Returns:
+        rgb_map: [num_rays, 3]. Estimated RGB color of a ray.
+        disparity_map: [num_rays]. Disparity map. Inverse of depth map.
+        acc_map: [num_rays]. Accumulated weights along each ray.
+        weights: [num_rays, num_samples]. Weights assigned to each sampled color.
+        depth_map: [num_rays]. Estimated distance to object.
+    """
+    # This is Delta T in the parametrized ray: ray(t)=o+td.
+    # append infinity distance for last element
+    delta_t = z_vals[..., 1:] - z_vals[..., :-1]
+    delta_t = torch.cat(
+        [delta_t, torch.Tensor([1e10]).expand(delta_t[..., :1].shape)],
+        dim=-1,
+    )  # [N_rays, N_samples]
+
+    # each ray has different speed because directional vector d is unnormalized.
+    ray_speed = torch.norm(rays_d[..., None, :], dim=-1)
+
+    dists = delta_t * ray_speed
+
+    rgb_raw = torch.sigmoid(raw[..., :3])  # [N_rays, N_samples, 3]
+    alpha_raw = raw[..., 3]  # [N_rays, N_samples]
+    # perturb alpha channel with Gaussian noise
+    if raw_noise_std > 0.0:
+        noise = torch.randn_like(alpha_raw) * raw_noise_std
+        alpha_raw = alpha_raw + noise
+    alpha = 1.0 - torch.exp(-F.relu(alpha_raw) * dists)  # [N_rays, N_samples]
+
+    # Math: weights_i = alpha_i * prod^{i-1}_{j=1} (1-alpha_j)
+    accumulated_transmittance = (1.0 - alpha + 1e-10).cumprod(dim=-1)
+    accumulated_transmittance = torch.cat(
+        [
+            torch.ones_like(accumulated_transmittance[..., :1]),
+            accumulated_transmittance[..., :-1],
+        ],
+        dim=-1,
+    )
+    # weights = alpha * tf.math.cumprod(1.-alpha + 1e-10, -1, exclusive=True)
+    weights = alpha * accumulated_transmittance  # [N_rays, N_samples]
+
+    rgb_map = torch.sum(weights[..., None] * rgb_raw, dim=-2)  # [N_rays, 3]
+    depth_map = torch.sum(weights * z_vals, -1)
+    disparity_map = 1.0 / torch.max(
+        1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1)
+    )
+    acc_map = torch.sum(weights, -1)
+
+    # If ray didn't hit any object (low accumulated weights),
+    # make the pixel white by adding same value to all RGB channels.
+    if white_bkgd:
+        rgb_map = rgb_map + (1.0 - acc_map[..., None])
+
+    return rgb_map, disparity_map, acc_map, weights, depth_map
