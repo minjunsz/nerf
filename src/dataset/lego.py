@@ -1,13 +1,13 @@
-from typing import Literal, Any
+import json
 from dataclasses import dataclass
 from pathlib import Path
-import json
+from typing import Any, Literal
 
 import imageio.v2 as imageio
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 import torchvision.transforms.functional as F
+from torch.utils.data import Dataset
 
 DATASPLIT = Literal["train", "val", "test"]
 
@@ -19,11 +19,11 @@ class ViewData:
 
 
 def read_camera_params(
-    data_path: str, split: DATASPLIT = "train", half_res: bool = False
+    data_path: Path, split: DATASPLIT = "train", half_res: bool = False
 ) -> tuple[int, int, float]:
     """Read camera parameters from the metadata file.
     Returns (height, width, focal_length) tuple."""
-    metadata_path = Path(data_path) / f"transforms_{split}.json"
+    metadata_path = data_path / f"transforms_{split}.json"
     metadata = metadata_path.read_text()
     metadata = json.loads(metadata)
     sample_img = Path(data_path) / f"{metadata['frames'][0]['file_path']}.png"
@@ -38,12 +38,17 @@ class LegoDataset(Dataset):
     """This is a nerf dataset for synthetic lego model from blender."""
 
     def __init__(
-        self, data_path: Path, split: DATASPLIT = "train", half_res: bool = False
+        self,
+        data_path: Path,
+        split: DATASPLIT = "train",
+        half_res: bool = False,
+        white_background: bool = True,
     ) -> None:
         super().__init__()
         self.data_path = data_path
         self.split = split
         self.half_res = half_res
+        self.white_background = white_background
         self.frames: list[Any]
         metadata_path = self.data_path / f"transforms_{split}.json"
         with metadata_path.open() as f:
@@ -64,6 +69,11 @@ class LegoDataset(Dataset):
                 2, 0, 1
             )  # resize in torchvision expects [...,H,W] shape
             img = F.resize(permuted, [H // 2, W // 2], antialias=True).permute(1, 2, 0)
+
+        if self.white_background:
+            img = img[..., :3] * img[..., -1:] + (1.0 - img[..., -1:])
+        else:
+            img = img[..., :3]
 
         return ViewData(img, pose)
 

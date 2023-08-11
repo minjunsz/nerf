@@ -10,6 +10,10 @@ import yaml
 class Config:
     data_path: str
     project_name: str
+    train_iters: int
+    pre_crop_iters: int
+    pre_crop_frac: float
+    N_rand: int
 
 
 def get_config() -> Config:

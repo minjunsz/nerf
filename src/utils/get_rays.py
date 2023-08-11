@@ -49,6 +49,3 @@ def get_rays(
     # Translate camera frame's origin to the world frame. It is the origin of all rays.
     rays_o = c2w[:3, -1].expand(rays_d.shape)
     return rays_o, rays_d
-
-
-# TODO: implement hierarchical sampling
