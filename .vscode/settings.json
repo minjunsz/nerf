@@ -1,0 +1,29 @@
+{
+    "editor.formatOnSave": true,
+    "pylint.importStrategy": "fromEnvironment",
+    "pylint.interpreter": [
+        "${userHome}/miniconda3/envs/nerf/bin/python"
+    ],
+    "python.defaultInterpreterPath": "${userHome}/miniconda3/envs/nerf/bin/python",
+    "python.terminal.activateEnvInCurrentTerminal": false,
+    "black-formatter.importStrategy": "fromEnvironment",
+    "black-formatter.interpreter": [
+        "${userHome}/miniconda3/envs/nerf/bin/python"
+    ],
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": true
+        },
+    },
+    "isort.check": true,
+    "isort.importStrategy": "fromEnvironment",
+    "isort.interpreter": [
+        "${userHome}/miniconda3/envs/nerf/bin/python"
+    ],
+    "isort.args": [
+        "--profile",
+        "black"
+    ],
+}
