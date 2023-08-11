@@ -38,10 +38,10 @@ class LegoDataset(Dataset):
     """This is a nerf dataset for synthetic lego model from blender."""
 
     def __init__(
-        self, data_path: str, split: DATASPLIT = "train", half_res: bool = False
+        self, data_path: Path, split: DATASPLIT = "train", half_res: bool = False
     ) -> None:
         super().__init__()
-        self.data_path = Path(data_path)
+        self.data_path = data_path
         self.split = split
         self.half_res = half_res
         self.frames: list[Any]
@@ -56,18 +56,18 @@ class LegoDataset(Dataset):
     def __getitem__(self, index) -> ViewData:
         img_path = self.data_path / f"{self.frames[index]['file_path']}.png"
         img = torch.tensor(imageio.imread(img_path) / 255.0).type(torch.float32)
-        pose = torch.tensor(self.frames[index]["transform_matrix"]).type(
-            torch.float32
-        )
-        
+        pose = torch.tensor(self.frames[index]["transform_matrix"]).type(torch.float32)
+
         if self.half_res:
-            H,W = img.shape[0:2]
-            permuted = img.permute(2,0,1) # resize in torchvision expects [...,H,W] shape
-            img = F.resize(permuted, [H//2, W//2], antialias=True).permute(1,2,0)
+            H, W = img.shape[0:2]
+            permuted = img.permute(
+                2, 0, 1
+            )  # resize in torchvision expects [...,H,W] shape
+            img = F.resize(permuted, [H // 2, W // 2], antialias=True).permute(1, 2, 0)
 
         return ViewData(img, pose)
 
 
 if __name__ == "__main__":
-    datapath = "/home/minjun/codes/nerf/data/nerf_synthetic/lego"
+    datapath = Path("/home/minjun/codes/nerf/data/nerf_synthetic/lego")
     dataset = LegoDataset(data_path=datapath, split="train", half_res=True)

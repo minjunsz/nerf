@@ -1,6 +1,8 @@
 """This module includes whole training pipeline for NeRF."""
+from pathlib import Path
 from src.models.nerf import Embedder, NeRF
 from src.dataset.lego import LegoDataset
+from src.utils.config_parser import get_config
 
 
 def instantiate_model(
@@ -48,5 +50,15 @@ def instantiate_model(
     return coarse_model, fine_model, xyz_embedder, viewdir_embedder
 
 
-# def train():
-#     LegoDataset()
+def train():
+    config = get_config()
+    data_path = Path(config.data_path)
+    if not data_path.exists():
+        raise Exception("No such data directory")
+    train_data = LegoDataset(data_path, "train", half_res=True)
+    val_data = LegoDataset(data_path, "val", half_res=True)
+    test_data = LegoDataset(data_path, "test", half_res=True)
+
+
+if __name__ == "__main__":
+    train()

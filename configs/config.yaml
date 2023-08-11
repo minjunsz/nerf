@@ -1,0 +1,2 @@
+project_name: "NeRF Original"
+data_path: "./data/nerf_synthetic/lego"
