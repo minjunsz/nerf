@@ -1,5 +1,6 @@
 """This module includes whole training pipeline for NeRF."""
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
@@ -91,6 +92,9 @@ def train():
     loss_fn = mean_squared_error
 
     for iteration in range(config.train_iters):
+        if iteration % 500 == 0:
+            print(f"Iteration {iteration} start : {time.ctime(time.time())}")
+        
         img_idx = np.random.randint(len(train_dataset))
         data = train_dataset[img_idx]
         img, pose = data.imgs, data.poses
@@ -150,6 +154,17 @@ def train():
             current_lr *= 0.1
             for param_group in optimizer.param_groups:
                 param_group["lr"] = current_lr
+        
+        if iteration % 2000 == 0:
+            print(f"Iteration {iteration}: loss {total_loss.item()}")
+            PATH = Path.cwd() / 'checkpoints' / str(config.run_id) / f"iter_{iteration}.pt"
+            torch.save({
+                'iteration': iteration,
+                'coarse_model': coarse_model.state_dict(),
+                'fine_model': fine_model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': total_loss.item(),
+            }, PATH)
 
 
 if __name__ == "__main__":
