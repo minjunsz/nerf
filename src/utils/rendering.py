@@ -197,7 +197,7 @@ def integrate_ray(
     # append infinity distance for last element
     delta_t = z_vals[..., 1:] - z_vals[..., :-1]
     delta_t = torch.cat(
-        [delta_t, torch.Tensor([1e10]).expand(delta_t[..., :1].shape)],
+        [delta_t, torch.tensor([1e10]).expand(delta_t[..., :1].shape)],
         dim=-1,
     )  # [N_rays, N_samples]
 

@@ -59,6 +59,8 @@ def instantiate_model(
 
 
 def train():
+    if torch.cuda.is_available():
+        torch.set_default_device('cuda:1')
     config = get_config()
     data_path = Path(config.data_path)
     if not data_path.exists():
