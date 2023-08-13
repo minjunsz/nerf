@@ -45,7 +45,7 @@ def get_rays(
 
     # Converted directional vectors into column vector before multiplying transformation matrix.
     # Convert it back to single-dimensional vector.
-    rays_d = (c2w[:3, :3] @ directions[..., None]).unsqueeze(dim=-1)
+    rays_d = (c2w[:3, :3] @ directions[..., None]).squeeze(dim=-1)
     # Translate camera frame's origin to the world frame. It is the origin of all rays.
     rays_o = c2w[:3, -1].expand(rays_d.shape)
     return rays_o, rays_d

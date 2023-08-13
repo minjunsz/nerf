@@ -3,12 +3,14 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torchmetrics.functional import mean_squared_error
 
 from src.dataset.lego import LegoDataset, read_camera_params
 from src.models.nerf import Embedder, NeRF
 from src.utils.config_parser import get_config
 from src.utils.exceptions import NoDataException
 from src.utils.get_rays import get_rays
+from src.utils.rendering import render_img
 
 
 def instantiate_model(
@@ -76,10 +78,20 @@ def train():
     )
 
     coarse_model, fine_model, xyz_embedder, viewdir_embedder = instantiate_model()
+
+    initial_lr, lr_decay_step = 5e-4, 250
+    current_lr = initial_lr
+    optimizer = torch.optim.Adam(
+        params=list(coarse_model.parameters()) + list(fine_model.parameters()),
+        lr=current_lr,
+        betas=(0.9, 0.999),
+    )
+    loss_fn = mean_squared_error
+
     for iteration in range(config.train_iters):
         img_idx = np.random.randint(len(train_dataset))
         data = train_dataset[img_idx]
-        img, pose = data.imgs, data.poses[:3, :4]
+        img, pose = data.imgs, data.poses
         rays_o, rays_d = get_rays(height, width, K, c2w=pose)
 
         if iteration < config.pre_crop_iters:
@@ -103,7 +115,7 @@ def train():
                 dim=-1,
             )  # (H, W, 2)
 
-        coords = torch.reshape(coords, [-1, 2])  # (H * W, 2)
+        coords = coords.reshape(-1, 2)  # (H * W, 2)
         select_inds = np.random.choice(
             coords.shape[0],
             size=[config.N_rand],
@@ -113,6 +125,29 @@ def train():
         rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
         rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
         target_pixels = img[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+
+        rendered_result = render_img(
+            coarse_model,
+            fine_model,
+            rays_o,
+            rays_d,
+            xyz_embedder,
+            viewdir_embedder,
+            near=near,
+            far=far,
+        )
+
+        optimizer.zero_grad()
+        img_loss = loss_fn(rendered_result["fine"].rgb_map, target_pixels)
+        coarse_loss = loss_fn(rendered_result["coarse"].rgb_map, target_pixels)
+        total_loss = img_loss + coarse_loss
+        total_loss.backward()
+        optimizer.step()
+
+        if iteration % lr_decay_step == lr_decay_step - 1:
+            current_lr *= 0.1
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = current_lr
 
 
 if __name__ == "__main__":

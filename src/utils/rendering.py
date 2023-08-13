@@ -278,13 +278,13 @@ def run_network(
         Raw radiance data for each voxel. [N_rays, N_samples, 4] (rgbd data)
     """
     xyz_flat = xyz_points.flatten(start_dim=0, end_dim=-2)
-    xyz_embedding = xyz_embedder.embed(xyz_flat)
+    xyz_embedding = xyz_embedder.embed(xyz_flat)  # [N_rays*N_samples,3]
 
-    viewdir_embedding = viewdir_embedder.embed(viewdir)
-    viewdir_embedding = viewdir_embedding[..., None, :].expand_as(xyz_flat)
-    viewdir_flat_embedding = viewdir_embedding.flatten(start_dim=0, end_dim=-2)
+    viewdir_expand = viewdir[..., None, :].expand_as(xyz_points)
+    viewdir_flat = viewdir_expand.flatten(start_dim=0, end_dim=-2)
+    viewdir_embedding = viewdir_embedder.embed(viewdir_flat)
 
-    embedding = torch.cat([xyz_embedding, viewdir_flat_embedding], dim=-1)
+    embedding = torch.cat([xyz_embedding, viewdir_embedding], dim=-1)
 
     chunk_outputs: list[torch.Tensor] = []
     for i in range(0, embedding.size(0), chunk_size):
