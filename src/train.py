@@ -82,7 +82,7 @@ def train():
 
     coarse_model, fine_model, xyz_embedder, viewdir_embedder = instantiate_model()
 
-    initial_lr, lr_decay_step = 5e-3, 15
+    initial_lr, lr_decay_step = 5e-4, 20
     current_lr = initial_lr
     optimizer = torch.optim.Adam(
         params=list(coarse_model.parameters()) + list(fine_model.parameters()),

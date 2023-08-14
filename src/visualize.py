@@ -42,24 +42,24 @@ def visualize(run_id: int, iteration: int):
     mat = torch.tensor(
         [
             [
-                -0.9993038773536682,
-                -0.0326223149895668,
-                0.018094748258590698,
-                0.07294226437807083,
+                0.4429636299610138,
+                0.31377720832824707,
+                -0.8398374915122986,
+                -3.385493516921997,
             ],
             [
-                0.037304628640413284,
-                -0.8738756775856018,
-                0.4847160875797272,
-                1.9539530277252197,
+                -0.8965396881103516,
+                0.1550314873456955,
+                -0.41494810581207275,
+                -1.6727094650268555,
             ],
-            [0.0, 0.48505374789237976, 0.8744843602180481, 3.5251591205596924],
+            [0.0, 0.936754584312439, 0.3499869406223297, 1.4108426570892334],
             [0.0, 0.0, 0.0, 1.0],
         ]
-    )
+    )  # r02
 
-    # rays_o, rays_d = get_rays(height, width, K, c2w=c2w(4.0, 30.0, 0.0))
-    rays_o, rays_d = get_rays(height, width, K, c2w=mat)
+    rays_o, rays_d = get_rays(height, width, K, c2w=c2w(4.0, 60.0, 50.0))
+    # rays_o, rays_d = get_rays(height, width, K, c2w=mat)
     rays_o, rays_d = rays_o.flatten(0, 1), rays_d.flatten(0, 1)
     render_result = render_img(
         coarse_model,
@@ -81,4 +81,4 @@ def visualize(run_id: int, iteration: int):
 
 if __name__ == "__main__":
     with torch.no_grad():
-        visualize(2, 85)
+        visualize(1, 90)
