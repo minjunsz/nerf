@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Callable, Literal, TypedDict
 
 import torch
 import torch.linalg as LA
@@ -157,12 +157,39 @@ class IntegrateResult:
 
     @staticmethod
     def merge_results(results: list[IntegrateResult]) -> IntegrateResult:
+        if not results:
+            return IntegrateResult(
+                rgb_map=torch.tensor([]),
+                disparity_map=torch.tensor([]),
+                acc_map=torch.tensor([]),
+                depth_map=torch.tensor([]),
+                weights=torch.tensor([]),
+            )
+
         return IntegrateResult(
             rgb_map=torch.cat([res.rgb_map for res in results], dim=0),
             disparity_map=torch.cat([res.disparity_map for res in results], dim=0),
             acc_map=torch.cat([res.acc_map for res in results], dim=0),
             depth_map=torch.cat([res.depth_map for res in results], dim=0),
             weights=torch.cat([res.weights for res in results], dim=0),
+        )
+
+
+@dataclass
+class RenderResult:
+    # fmt: off
+    rgb_map: torch.Tensor           #  [num_rays, 3]. Estimated RGB color of a ray.
+    # fmt: on
+
+    @staticmethod
+    def merge_results(results: list[RenderResult]) -> RenderResult:
+        if not results:
+            return RenderResult(
+                rgb_map=torch.tensor([]),
+            )
+
+        return RenderResult(
+            rgb_map=torch.cat([res.rgb_map for res in results], dim=0),
         )
 
 
@@ -295,6 +322,12 @@ def run_network(
     return output
 
 
+class RenderImgReturn(TypedDict):
+    coarse: IntegrateResult
+    fine: IntegrateResult
+    render: RenderResult
+
+
 def render_img(
     coarse_model: NeRF,
     fine_model: NeRF,
@@ -309,7 +342,8 @@ def render_img(
     N_fine_sample: int = 128,
     lin_disparity: bool = False,
     stratified: bool = True,
-) -> dict[Literal["coarse", "fine"], IntegrateResult]:
+    render_only: bool = False,
+) -> RenderImgReturn:
     """Render an 2D image with the given model.
 
     Parameters
@@ -340,6 +374,8 @@ def render_img(
         How to sample coarse samples. If true, points are linearly sampled in disparity rather than depth, by default False
     stratified : bool, optional
         Whether to apply stratified sampling for coarse samples or not. If false, points are sampled deterministically, by default True
+    render_only : bool, optional
+        If this is set to True, we only return RenderResult to save cuda memory.
 
     Returns
     -------
@@ -363,6 +399,7 @@ def render_img(
 
     coarse_results: list[IntegrateResult] = []
     fine_results: list[IntegrateResult] = []
+    render_results: list[RenderResult] = []
 
     for i in range(0, bundled_rays.size(0), chunk_size):
         ray_batch = bundled_rays[i : i + chunk_size]
@@ -380,7 +417,7 @@ def render_img(
             xyz_embedder=xyz_embedder,
             viewdir_embedder=viewdir_embedder,
         )
-        coarse_result = integrate_ray(raw, z_vals, rays_d)
+        coarse_result = integrate_ray(raw, z_vals, ray_batch[..., 3:6])
 
         # TODO: Run FINE network
         xyz_points_fine, z_vals_fine = sample_fine_points(
@@ -396,7 +433,12 @@ def render_img(
             xyz_embedder,
             viewdir_embedder,
         )
-        fine_result = integrate_ray(raw_fine, z_vals_fine, rays_d)
+        fine_result = integrate_ray(raw_fine, z_vals_fine, ray_batch[..., 3:6])
+
+        if render_only:
+            rgb_map = fine_result.rgb_map.to(device="cpu")
+            render_results.append(RenderResult(rgb_map=rgb_map))
+            continue
 
         coarse_results.append(coarse_result)
         fine_results.append(fine_result)
@@ -404,4 +446,5 @@ def render_img(
     return {
         "coarse": IntegrateResult.merge_results(coarse_results),
         "fine": IntegrateResult.merge_results(fine_results),
+        "render": RenderResult.merge_results(render_results),
     }

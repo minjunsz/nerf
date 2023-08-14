@@ -1,6 +1,6 @@
 """This module includes whole training pipeline for NeRF."""
-from pathlib import Path
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -61,7 +61,7 @@ def instantiate_model(
 
 def train():
     if torch.cuda.is_available():
-        torch.set_default_device('cuda:1')
+        torch.set_default_device("cuda:1")
     config = get_config()
     data_path = Path(config.data_path)
     if not data_path.exists():
@@ -82,7 +82,7 @@ def train():
 
     coarse_model, fine_model, xyz_embedder, viewdir_embedder = instantiate_model()
 
-    initial_lr, lr_decay_step = 5e-4, 250
+    initial_lr, lr_decay_step = 5e-3, 15
     current_lr = initial_lr
     optimizer = torch.optim.Adam(
         params=list(coarse_model.parameters()) + list(fine_model.parameters()),
@@ -92,13 +92,14 @@ def train():
     loss_fn = mean_squared_error
 
     for iteration in range(config.train_iters):
-        if iteration % 500 == 0:
+        if iteration % config.log_interval == 0:
             print(f"Iteration {iteration} start : {time.ctime(time.time())}")
-        
+
         img_idx = np.random.randint(len(train_dataset))
+        print(f"Train with image {img_idx}")
         data = train_dataset[img_idx]
         img, pose = data.imgs, data.poses
-        rays_o, rays_d = get_rays(height, width, K, c2w=pose)
+        rays_o_whole, rays_d_whole = get_rays(height, width, K, c2w=pose)
 
         if iteration < config.pre_crop_iters:
             dH = int(height // 2 * config.pre_crop_frac)
@@ -122,49 +123,60 @@ def train():
             )  # (H, W, 2)
 
         coords = coords.reshape(-1, 2)  # (H * W, 2)
-        select_inds = np.random.choice(
-            coords.shape[0],
-            size=[config.N_rand],
-            replace=False,
-        )  # (N_rand,)
-        select_coords = coords[select_inds].long()  # (N_rand, 2)
-        rays_o = rays_o[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-        rays_d = rays_d[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
-        target_pixels = img[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+        random_idx = np.random.permutation(coords.size(0))
 
-        rendered_result = render_img(
-            coarse_model,
-            fine_model,
-            rays_o,
-            rays_d,
-            xyz_embedder,
-            viewdir_embedder,
-            near=near,
-            far=far,
-        )
+        acc_loss = 0.0
 
-        optimizer.zero_grad()
-        img_loss = loss_fn(rendered_result["fine"].rgb_map, target_pixels)
-        coarse_loss = loss_fn(rendered_result["coarse"].rgb_map, target_pixels)
-        total_loss = img_loss + coarse_loss
-        total_loss.backward()
-        optimizer.step()
+        for i in range(0, coords.size(0), config.N_rand):
+            random_idx_chunck = random_idx[i : i + config.N_rand]
+            select_coords = coords[random_idx_chunck].long()
+            rays_o = rays_o_whole[
+                select_coords[:, 0], select_coords[:, 1]
+            ]  # (N_rand, 3)
+            rays_d = rays_d_whole[
+                select_coords[:, 0], select_coords[:, 1]
+            ]  # (N_rand, 3)
+            target_pixels = img[select_coords[:, 0], select_coords[:, 1]]  # (N_rand, 3)
+
+            rendered_result = render_img(
+                coarse_model,
+                fine_model,
+                rays_o,
+                rays_d,
+                xyz_embedder,
+                viewdir_embedder,
+                near=near,
+                far=far,
+            )
+
+            optimizer.zero_grad()
+            img_loss = loss_fn(rendered_result["fine"].rgb_map, target_pixels)
+            coarse_loss = loss_fn(rendered_result["coarse"].rgb_map, target_pixels)
+            total_loss = img_loss + coarse_loss
+            total_loss.backward()
+            optimizer.step()
+            acc_loss += total_loss.item()
 
         if iteration % lr_decay_step == lr_decay_step - 1:
             current_lr *= 0.1
             for param_group in optimizer.param_groups:
                 param_group["lr"] = current_lr
-        
-        if iteration % 2000 == 0:
-            print(f"Iteration {iteration}: loss {total_loss.item()}")
-            PATH = Path.cwd() / 'checkpoints' / str(config.run_id) / f"iter_{iteration}.pt"
-            torch.save({
-                'iteration': iteration,
-                'coarse_model': coarse_model.state_dict(),
-                'fine_model': fine_model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'loss': total_loss.item(),
-            }, PATH)
+
+        if iteration % config.log_interval == 0:
+            print(f"Iteration {iteration}: loss {acc_loss}")
+            PATH = (
+                Path.cwd() / "checkpoints" / str(config.run_id) / f"iter_{iteration}.pt"
+            )
+            torch.save(
+                {
+                    "iteration": iteration,
+                    "coarse_model": coarse_model.state_dict(),
+                    "fine_model": fine_model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "loss": acc_loss,
+                },
+                PATH,
+            )
 
 
 if __name__ == "__main__":

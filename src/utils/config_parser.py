@@ -15,6 +15,7 @@ class Config:
     pre_crop_frac: float
     N_rand: int
     run_id: int
+    log_interval: int
 
 
 def get_config() -> Config:

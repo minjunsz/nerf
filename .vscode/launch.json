@@ -5,10 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Module",
+            "name": "Train",
             "type": "python",
             "request": "launch",
             "module": "src.train",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Visualize",
+            "type": "python",
+            "request": "launch",
+            "module": "src.visualize",
             "console": "integratedTerminal",
             "justMyCode": true
         }
