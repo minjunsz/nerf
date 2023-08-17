@@ -26,4 +26,7 @@
         "--profile",
         "black"
     ],
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportPrivateImportUsage": "none",
+    }
 }

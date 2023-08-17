@@ -252,7 +252,7 @@ class RenderRayReturn(TypedDict):
 
 
 def render_rays(
-    nerf: NeRF,
+    nerf: NeRFProtocol,
     rays_o: torch.Tensor,
     rays_d: torch.Tensor,
     near=0.0,

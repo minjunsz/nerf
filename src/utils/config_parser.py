@@ -13,7 +13,7 @@ class Config:
     train_iters: int
     pre_crop_iters: int
     pre_crop_frac: float
-    N_rand: int
+    batch_size: int
     run_id: int
     log_interval: int
 

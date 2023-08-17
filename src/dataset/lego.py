@@ -93,7 +93,7 @@ class LegoDataset(Dataset):
         sample_idx = np.random.randint(len(self))
         data = self[sample_idx]
         img, pose = data.imgs, data.poses
-        self.current_image = img.numpy()
+        self.current_image = img.cpu().numpy()
         rays_o, rays_d = get_rays(self.height, self.width, self.K, c2w=pose)
 
         if pre_crop:

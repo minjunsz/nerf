@@ -17,6 +17,8 @@ from torchmetrics.functional import mean_squared_error
 
 from src.dataset.lego import LegoDataset
 from src.models.encoding.embedder import Embedder
+from src.models.encoding.sinusoidal_positional_encoding import SinusoidalEmbedder
+from src.utils.config_parser import Config
 from src.utils.exceptions import NoDataException
 from src.utils.get_rays import get_rays
 from src.utils.rendering import render_rays
@@ -90,33 +92,43 @@ class MLPLayers(nn.Module):
 
 
 class NeRF(pl.LightningModule):
+    xyz_embedder: Embedder
+    viewdir_embedder: Embedder
+
     def __init__(
         self,
-        xyz_embedder: Embedder,
-        viewdir_embedder: Embedder,
-        data_path: Path,
+        config: Config,
+        xyz_max_freq: int = 10,
+        viewdir_max_freq: int = 4,
         hidden_dim: int = 256,
-        initial_lr: float = 5e-4,
+        initial_lr: float = 1e-4,
         near: float = 2.0,
         far: float = 6.0,
-        pre_crop_iters: int = 10,
-        pre_crop_frac: float = 0.5,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
-        self.xyz_embedder = xyz_embedder
-        self.viewdir_embedder = viewdir_embedder
+        data_path = Path(config.data_path)
         self.initial_lr = initial_lr
         self.near, self.far = near, far
 
+        self.xyz_embedder = SinusoidalEmbedder(
+            input_dim=3,
+            num_freqs=xyz_max_freq + 1,
+            max_freq=xyz_max_freq,
+        )
+        self.viewdir_embedder = SinusoidalEmbedder(
+            input_dim=3,
+            num_freqs=viewdir_max_freq + 1,
+            max_freq=viewdir_max_freq,
+        )
         self.coarse_model = MLPLayers(
-            xyz_channel=xyz_embedder.out_dim,
-            viewdir_channel=viewdir_embedder.out_dim,
+            xyz_channel=self.xyz_embedder.out_dim,
+            viewdir_channel=self.viewdir_embedder.out_dim,
             hidden_dim=hidden_dim,
         )
         self.fine_model = MLPLayers(
-            xyz_channel=xyz_embedder.out_dim,
-            viewdir_channel=viewdir_embedder.out_dim,
+            xyz_channel=self.xyz_embedder.out_dim,
+            viewdir_channel=self.viewdir_embedder.out_dim,
             hidden_dim=hidden_dim,
         )
 
@@ -125,8 +137,10 @@ class NeRF(pl.LightningModule):
         self.train_dataset = LegoDataset(data_path, "train", half_res=True)
         self.val_dataset = LegoDataset(data_path, "val", half_res=True)
         self.test_dataset = LegoDataset(data_path, "test", half_res=True)
-        self.pre_crop_iters = pre_crop_iters
-        self.pre_crop_frac = pre_crop_frac
+
+        self.batch_size = config.batch_size
+        self.pre_crop_iters = config.pre_crop_iters
+        self.pre_crop_frac = config.pre_crop_frac
 
         self.rendered_pixels: list[torch.Tensor] = []
 
@@ -135,8 +149,11 @@ class NeRF(pl.LightningModule):
             return self.train_dataset.get_iterable_rays(
                 pre_crop=True,
                 pre_crop_frac=self.pre_crop_frac,
+                batch_size=self.batch_size,
             )
-        return self.train_dataset.get_iterable_rays(pre_crop=False)
+        return self.train_dataset.get_iterable_rays(
+            pre_crop=False, batch_size=self.batch_size
+        )
 
     def on_train_epoch_start(self) -> None:
         print(f"start epoch {self.current_epoch}")
@@ -185,10 +202,12 @@ class NeRF(pl.LightningModule):
             optimizer, T_0=10, T_mult=2
         )
 
-        return [optimizer], [[lr_scheduler]]
+        return [optimizer], [lr_scheduler]
 
     def val_dataloader(self) -> EVAL_DATALOADERS:
-        return self.val_dataset.get_iterable_rays(pre_crop=False)
+        return self.val_dataset.get_iterable_rays(
+            pre_crop=False, batch_size=self.batch_size
+        )
 
     def validation_step(
         self, batch: tuple[torch.Tensor, ...], batch_idx: int
@@ -225,10 +244,11 @@ class NeRF(pl.LightningModule):
         img = (
             torch.cat(self.rendered_pixels, dim=0)
             .reshape(self.val_dataset.height, self.val_dataset.width, 3)
+            .cpu()
             .numpy()
         )
         img = (img * 255.0).astype(np.uint8)
-        wandb_logger: WandbLogger = self.logger.experiment
+        wandb_logger: WandbLogger = self.logger  # type: ignore
         wandb_logger.log_image(
             key="samples",
             images=[self.val_dataset.current_image, img],
@@ -274,7 +294,12 @@ class NeRF(pl.LightningModule):
             )
             rendered_rays.append(rendered_result["fine"].rgb_map.cpu())
 
-        img = torch.cat(self.rendered_pixels, dim=0).reshape(height, width, 3).numpy()
+        img = (
+            torch.cat(self.rendered_pixels, dim=0)
+            .reshape(height, width, 3)
+            .cpu()
+            .numpy()
+        )
         img: np.ndarray = (img * 255.0).astype(np.uint8)
         return img
 
