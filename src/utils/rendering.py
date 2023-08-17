@@ -2,13 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Literal, TypedDict
+from typing import Literal, Protocol, TypedDict
 
 import torch
 import torch.linalg as LA
 import torch.nn.functional as F
-
-from src.models.nerf import Embedder, NeRF
 
 
 def sample_coarse_points(
@@ -155,43 +153,6 @@ class IntegrateResult:
     weights: torch.Tensor           #  [num_rays, num_samples]. Weights assigned to each sampled color.
     # fmt: on
 
-    @staticmethod
-    def merge_results(results: list[IntegrateResult]) -> IntegrateResult:
-        if not results:
-            return IntegrateResult(
-                rgb_map=torch.tensor([]),
-                disparity_map=torch.tensor([]),
-                acc_map=torch.tensor([]),
-                depth_map=torch.tensor([]),
-                weights=torch.tensor([]),
-            )
-
-        return IntegrateResult(
-            rgb_map=torch.cat([res.rgb_map for res in results], dim=0),
-            disparity_map=torch.cat([res.disparity_map for res in results], dim=0),
-            acc_map=torch.cat([res.acc_map for res in results], dim=0),
-            depth_map=torch.cat([res.depth_map for res in results], dim=0),
-            weights=torch.cat([res.weights for res in results], dim=0),
-        )
-
-
-@dataclass
-class RenderResult:
-    # fmt: off
-    rgb_map: torch.Tensor           #  [num_rays, 3]. Estimated RGB color of a ray.
-    # fmt: on
-
-    @staticmethod
-    def merge_results(results: list[RenderResult]) -> RenderResult:
-        if not results:
-            return RenderResult(
-                rgb_map=torch.tensor([]),
-            )
-
-        return RenderResult(
-            rgb_map=torch.cat([res.rgb_map for res in results], dim=0),
-        )
-
 
 def integrate_ray(
     raw: torch.Tensor,
@@ -256,7 +217,8 @@ def integrate_ray(
     rgb_map = torch.sum(weights[..., None] * rgb_raw, dim=-2)  # [N_rays, 3]
     depth_map = torch.sum(weights * z_vals, -1)
     disparity_map = 1.0 / torch.max(
-        1e-10 * torch.ones_like(depth_map), depth_map / torch.sum(weights, -1)
+        1e-10 * torch.ones_like(depth_map),
+        depth_map / torch.sum(weights, -1),
     )
     acc_map = torch.sum(weights, -1)
 
@@ -274,94 +236,42 @@ def integrate_ray(
     )
 
 
-def run_network(
-    xyz_points: torch.Tensor,
-    viewdir: torch.Tensor,
-    model: Callable[[torch.Tensor], torch.Tensor],
-    xyz_embedder: Embedder,
-    viewdir_embedder: Embedder,
-    chunk_size: int = 1024 * 64,
-):
-    """Embed inputs, batchify points to avoid OOM, and reshape output
-
-    Parameters
-    ----------
-    xyz_points : torch.Tensor
-        input points' 3D coordinate in World Coordinate system. [N_rays, N_samples,3]
-    viewdir : torch.Tensor
-        input data's viewing direction vector in World Coordiante system. Shape [N_rays,3]
-    model : Callable[[torch.Tensor], torch.Tensor]
-        Core NeRF model with MLP.
-    xyz_embedder : Embedder
-        Auxiliary positional embedding class for xyz coordinate.
-    viewdir_embedder : Embedder
-        Auxiliary positional embedding class for viewing direction vector.
-    chunk_size : int, optional
-        Chunk size to avoid Out of Memory, by default 1024*64
-
-    Returns
-    -------
-    torch.Tensor
-        Raw radiance data for each voxel. [N_rays, N_samples, 4] (rgbd data)
-    """
-    xyz_flat = xyz_points.flatten(start_dim=0, end_dim=-2)
-    xyz_embedding = xyz_embedder.embed(xyz_flat)  # [N_rays*N_samples,3]
-
-    viewdir_expand = viewdir[..., None, :].expand_as(xyz_points)
-    viewdir_flat = viewdir_expand.flatten(start_dim=0, end_dim=-2)
-    viewdir_embedding = viewdir_embedder.embed(viewdir_flat)
-
-    embedding = torch.cat([xyz_embedding, viewdir_embedding], dim=-1)
-
-    chunk_outputs: list[torch.Tensor] = []
-    for i in range(0, embedding.size(0), chunk_size):
-        chunk = embedding[i : i + chunk_size]
-        chunk_outputs.append(model(chunk))
-    output_flat = torch.cat(chunk_outputs, dim=0)
-    output = output_flat.reshape(xyz_points.shape[:-1] + output_flat.shape[-1:])
-    return output
+class NeRFProtocol(Protocol):
+    def estimate_RGBd(
+        self,
+        xyz_points: torch.Tensor,
+        viewdir: torch.Tensor,
+        network: Literal["coarse", "fine"],
+    ) -> torch.Tensor:
+        ...
 
 
-class RenderImgReturn(TypedDict):
+class RenderRayReturn(TypedDict):
     coarse: IntegrateResult
     fine: IntegrateResult
-    render: RenderResult
 
 
-def render_img(
-    coarse_model: NeRF,
-    fine_model: NeRF,
+def render_rays(
+    nerf: NeRF,
     rays_o: torch.Tensor,
     rays_d: torch.Tensor,
-    xyz_embedder: Embedder,
-    viewdir_embedder: Embedder,
-    chunk_size: int = 1024 * 32,
     near=0.0,
     far=1.0,
     N_coarse_sample: int = 64,
     N_fine_sample: int = 128,
     lin_disparity: bool = False,
     stratified: bool = True,
-    render_only: bool = False,
-) -> RenderImgReturn:
-    """Render an 2D image with the given model.
+) -> RenderRayReturn:
+    """Render RGB pixel values for the rays with the given model.
 
     Parameters
     ----------
-    coarse_model : NeRF
-        Core NeRF model for coarse-grained samples
-    fine_model : NeRF
-        Core NeRF model for fine-grained samples (hierarchical sampling)
+    nerf : NeRF
+        Core NeRF model written in pytorch lightning.
     rays_o : torch.Tensor
         [N_rays, 3] origin of rays in world coordinate
     rays_d : torch.Tensor
         [N_rays, 3] unnormalized directional vector of rays in world coordinate.
-    xyz_embedder : Embedder
-        Auxiliary embedder object for positional encoding of XYZ position in world coordinate.
-    viewdir_embedder : Embedder
-        Auxiliary embedder object for positional encoding of viewing direction vector in world coordinate.
-    chunk_size : int, optional
-        Size of batch to avoid OOM, by default 1024*32
     near : float, optional
         Near cutoff of the viewing frustum, by default 0.0
     far : float, optional
@@ -374,8 +284,6 @@ def render_img(
         How to sample coarse samples. If true, points are linearly sampled in disparity rather than depth, by default False
     stratified : bool, optional
         Whether to apply stratified sampling for coarse samples or not. If false, points are sampled deterministically, by default True
-    render_only : bool, optional
-        If this is set to True, we only return RenderResult to save cuda memory.
 
     Returns
     -------
@@ -397,54 +305,25 @@ def render_img(
         dim=-1,
     )  # [N_rays, 11]
 
-    coarse_results: list[IntegrateResult] = []
-    fine_results: list[IntegrateResult] = []
-    render_results: list[RenderResult] = []
+    xyz_points_coarse, z_vals_coarse = sample_coarse_points(
+        bundled_rays,
+        N_samples=N_coarse_sample,
+        lin_disparity=lin_disparity,
+        stratified=stratified,
+    )
+    raw_coarse = nerf.estimate_RGBd(xyz_points_coarse, viewdir, network="coarse")
+    coarse_result = integrate_ray(raw_coarse, z_vals_coarse, rays_d)
 
-    for i in range(0, bundled_rays.size(0), chunk_size):
-        ray_batch = bundled_rays[i : i + chunk_size]
-        viewdir_batch = viewdir[i : i + chunk_size]
-        xyz_points, z_vals = sample_coarse_points(
-            ray_batch,
-            N_samples=N_coarse_sample,
-            lin_disparity=lin_disparity,
-            stratified=stratified,
-        )
-        raw = run_network(
-            xyz_points,
-            viewdir_batch,
-            coarse_model,
-            xyz_embedder=xyz_embedder,
-            viewdir_embedder=viewdir_embedder,
-        )
-        coarse_result = integrate_ray(raw, z_vals, ray_batch[..., 3:6])
-
-        # TODO: Run FINE network
-        xyz_points_fine, z_vals_fine = sample_fine_points(
-            z_vals,
-            coarse_result.weights,
-            ray_batch,
-            N_fine_sample,
-        )
-        raw_fine = run_network(
-            xyz_points_fine,
-            viewdir_batch,
-            fine_model,
-            xyz_embedder,
-            viewdir_embedder,
-        )
-        fine_result = integrate_ray(raw_fine, z_vals_fine, ray_batch[..., 3:6])
-
-        if render_only:
-            rgb_map = fine_result.rgb_map.to(device="cpu")
-            render_results.append(RenderResult(rgb_map=rgb_map))
-            continue
-
-        coarse_results.append(coarse_result)
-        fine_results.append(fine_result)
+    xyz_points_fine, z_vals_fine = sample_fine_points(
+        z_vals_coarse,
+        coarse_result.weights,
+        bundled_rays,
+        N_fine_sample,
+    )
+    raw_fine = nerf.estimate_RGBd(xyz_points_fine, viewdir, network="fine")
+    fine_result = integrate_ray(raw_fine, z_vals_fine, rays_d)
 
     return {
-        "coarse": IntegrateResult.merge_results(coarse_results),
-        "fine": IntegrateResult.merge_results(fine_results),
-        "render": RenderResult.merge_results(render_results),
+        "coarse": coarse_result,
+        "fine": fine_result,
     }

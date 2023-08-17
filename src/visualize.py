@@ -8,7 +8,7 @@ from src.dataset.lego import read_camera_params
 from src.utils.config_parser import get_config
 from src.utils.generate_render_pose import c2w
 from src.utils.get_rays import get_rays
-from src.utils.rendering import render_img
+from src.utils.rendering import render_rays
 
 from .train import instantiate_model
 
@@ -61,7 +61,7 @@ def visualize(run_id: int, iteration: int):
     rays_o, rays_d = get_rays(height, width, K, c2w=c2w(4.0, 60.0, 50.0))
     # rays_o, rays_d = get_rays(height, width, K, c2w=mat)
     rays_o, rays_d = rays_o.flatten(0, 1), rays_d.flatten(0, 1)
-    render_result = render_img(
+    render_result = render_rays(
         coarse_model,
         fine_model,
         rays_o,

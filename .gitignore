@@ -1,3 +1,4 @@
 data/nerf_*
 __pycache__
 checkpoints/*
+wandb/*
