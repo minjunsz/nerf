@@ -10,6 +10,7 @@ from src.utils.config_parser import get_config
 
 def train():
     config = get_config()
+    pl.seed_everything(100)
 
     if torch.cuda.is_available():
         torch.set_default_device("cuda:1")

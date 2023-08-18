@@ -1,8 +1,8 @@
 project_name: "NeRF Original"
 data_path: "./data/nerf_synthetic/lego"
 train_iters: 1000
-pre_crop_iters: 10
+pre_crop_iters: 80
 pre_crop_frac: 0.5
-N_rand: 2048
+batch_size: 2048
 run_id: 1
 log_interval: 10

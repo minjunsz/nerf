@@ -89,6 +89,7 @@ class LegoDataset(Dataset):
         pre_crop: bool = False,
         pre_crop_frac: float = 0.5,
         batch_size: int = 2048,
+        randomize: bool = True,
     ):
         sample_idx = np.random.randint(len(self))
         data = self[sample_idx]
@@ -122,11 +123,14 @@ class LegoDataset(Dataset):
             )  # (H, W, 2)
 
         coords = coords.reshape(-1, 2)  # (H * W, 2)
-        random_idx = np.random.permutation(coords.size(0))
+        if randomize:
+            indices = np.random.permutation(coords.size(0))
+        else:
+            indices = np.arange(coords.size(0))
 
         for i in range(0, coords.size(0), batch_size):
-            random_idx_batch = random_idx[i : i + batch_size]
-            coords_batch = coords[random_idx_batch].long()
+            batch_idx = indices[i : i + batch_size]
+            coords_batch = coords[batch_idx].long()
             rays_o_batch = rays_o[
                 coords_batch[:, 0], coords_batch[:, 1]
             ]  # (batch_size, 3)

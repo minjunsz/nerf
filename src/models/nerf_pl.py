@@ -13,6 +13,7 @@ from lightning.pytorch.utilities.types import (
     TRAIN_DATALOADERS,
 )
 from torch import nn
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torchmetrics.functional import mean_squared_error
 
 from src.dataset.lego import LegoDataset
@@ -198,15 +199,13 @@ class NeRF(pl.LightningModule):
             lr=self.initial_lr,
             betas=(0.9, 0.999),
         )
-        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-            optimizer, T_0=10, T_mult=2
-        )
+        lr_scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
 
         return [optimizer], [lr_scheduler]
 
     def val_dataloader(self) -> EVAL_DATALOADERS:
         return self.val_dataset.get_iterable_rays(
-            pre_crop=False, batch_size=self.batch_size
+            pre_crop=False, batch_size=self.batch_size, randomize=False
         )
 
     def validation_step(
@@ -294,12 +293,7 @@ class NeRF(pl.LightningModule):
             )
             rendered_rays.append(rendered_result["fine"].rgb_map.cpu())
 
-        img = (
-            torch.cat(self.rendered_pixels, dim=0)
-            .reshape(height, width, 3)
-            .cpu()
-            .numpy()
-        )
+        img = torch.cat(rendered_rays, dim=0).reshape(height, width, 3).cpu().numpy()
         img: np.ndarray = (img * 255.0).astype(np.uint8)
         return img
 
