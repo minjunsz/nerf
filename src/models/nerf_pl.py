@@ -329,3 +329,13 @@ class NeRF(pl.LightningModule):
         output_flat = model(embedding)
         output = output_flat.reshape(xyz_points.shape[:-1] + output_flat.shape[-1:])
         return output
+
+    def estimate_density(self, xyz_points: torch.Tensor) -> torch.Tensor:
+        model = self.fine_model
+        dummy_viewdir = torch.empty_like(xyz_points)
+        xyz_embedding = self.xyz_embedder.embed(xyz_points)
+        viewdir_embedding = self.viewdir_embedder.embed(dummy_viewdir)
+        embedding = torch.cat([xyz_embedding, viewdir_embedding], dim=-1)
+        output = model(embedding)
+        alpha = output[:, -1]
+        return alpha
